@@ -2,22 +2,20 @@ library(tidyverse)
 library(tidymodels)
 library(vroom)
 library(patchwork)
+library(glmnet)
 
+#####
+## Read in and clean train and test data
+#####
 bike_share <- vroom("train.csv") %>% 
-  mutate(weather = as.factor(weather), 
-         holiday = as.factor(holiday), 
-         season = as.factor(season), 
-         workingday = as.factor(workingday)) %>% 
+  mutate(count = log(count)) %>% 
   select(-casual, -registered)
 
-test_data <- vroom("test.csv") %>% 
-  mutate(weather = as.factor(weather), 
-         holiday = as.factor(holiday), 
-         season = as.factor(season), 
-         workingday = as.factor(workingday)) 
+test_data <- vroom("test.csv") 
 
-GGally::ggpairs(bike_share)
-
+#####
+## EDA
+#####
 weather_bar <- ggplot(bike_share, aes(x = weather)) +
   geom_bar() +
   labs(
@@ -30,7 +28,7 @@ temp_plot <- ggplot(bike_share, aes(x = temp, y = count)) +
   labs(
     title = "Bike Rentals By Temp"
   )
-  
+
 season_bar <- ggplot(bike_share, aes(x = season)) +
   geom_bar() +
   labs(
@@ -47,20 +45,65 @@ humid_plot <- ggplot(bike_share, aes(x = humidity)) +
 
 ggsave("Bike_EDA.png")
 
-## Set up and fit the Linear Regression Model
-bike_share_model <- linear_reg() %>% 
-  set_engine("lm") %>% 
-  set_mode("regression") %>% 
-  fit(formula = count ~ ., data = bike_share)
 
-## Generate predictions using linear model
-bike_predictions <- predict(bike_share_model,
-                            new_data = test_data)
+#####
+## Feature Engineering Recipe
+##### 
+bike_recipe <- recipe(count ~., data = bike_share) %>% 
+  step_mutate(weather = ifelse(weather == 4, 3, weather)) %>% 
+  step_mutate(weather = as.factor(weather)) %>% 
+  step_mutate(season = as.factor(season)) %>% 
+  step_mutate(holiday = as.factor(holiday)) %>% 
+  step_mutate(workingday = as.factor(workingday)) %>% 
+  step_time(datetime, features = "hour") %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_rm(datetime)
+
+prepped_recipe <- prep(bike_recipe)
+bake(prepped_recipe, new_data = bike_share)
+
+#####
+## Set up and fit a penalized regression model
+#####
+# five combinations of penalty and mixture
+
+# 1.41 kaggle score
+# bike_share_model <- linear_reg(penalty = 5, mixture = 0.2) %>% 
+#   set_engine("glmnet")
+
+# 1.41 kaggle score
+# bike_share_model <- linear_reg(penalty = 12, mixture = 0.8) %>% 
+#   set_engine("glmnet")
+
+#1.28 kaggle score
+# bike_share_model <- linear_reg(penalty = 1, mixture = 0.5) %>%
+#   set_engine("glmnet")
+
+#1.19 kaggle score
+# bike_share_model <- linear_reg(penalty = 2, mixture = 0.1) %>%
+#   set_engine("glmnet")
+
+#1.022 kaggle score
+bike_share_model <- linear_reg(penalty = 0.1, mixture = 0.1) %>%
+  set_engine("glmnet")
+
+## Combine into a workflow and fit
+bike_workflow <- workflow() %>% 
+  add_recipe(bike_recipe) %>% 
+  add_model(bike_share_model) %>% 
+  fit(data = bike_share)
+
+## Generate predictions using penalized linear model
+bike_predictions <- predict(bike_workflow, new_data = test_data)
+
 ## Look at the predictions
 bike_predictions
 
+#####
 ## Format the predictions for submission to kaggle
-kaggle_submission <- bike_predictions %>% 
+#####
+kaggle_submission <- exp(bike_predictions) %>% 
   bind_cols(., test_data) %>% 
   select(datetime, .pred) %>% 
   rename(count = .pred) %>% 
