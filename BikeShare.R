@@ -7,7 +7,7 @@ library(glmnet)
 #####
 ## Read in and clean train and test data
 #####
-bike_share <- vroom("train.csv") %>% 
+training_data <- vroom("train.csv") %>% 
   mutate(count = log(count)) %>% 
   select(-casual, -registered)
 
@@ -16,26 +16,26 @@ test_data <- vroom("test.csv")
 #####
 ## EDA
 #####
-weather_bar <- ggplot(bike_share, aes(x = weather)) +
+weather_bar <- ggplot(training_data, aes(x = weather)) +
   geom_bar() +
   labs(
     title = "Bike Rentals By Weather"
   )
 
-temp_plot <- ggplot(bike_share, aes(x = temp, y = count)) +
+temp_plot <- ggplot(training_data, aes(x = temp, y = count)) +
   geom_point() +
   geom_smooth(se = F) +
   labs(
     title = "Bike Rentals By Temp"
   )
 
-season_bar <- ggplot(bike_share, aes(x = season)) +
+season_bar <- ggplot(training_data, aes(x = season)) +
   geom_bar() +
   labs(
     title = "Bike Rentals By Season"
   )
 
-humid_plot <- ggplot(bike_share, aes(x = humidity)) +
+humid_plot <- ggplot(training_data, aes(x = humidity)) +
   geom_boxplot() +
   labs(
     title = "Bike Rentals By Humidity"
@@ -49,7 +49,7 @@ ggsave("Bike_EDA.png")
 #####
 ## Feature Engineering Recipe
 ##### 
-bike_recipe <- recipe(count ~., data = bike_share) %>% 
+bike_recipe <- recipe(count ~., data = training_data) %>% 
   step_mutate(weather = ifelse(weather == 4, 3, weather)) %>% 
   step_mutate(weather = as.factor(weather)) %>% 
   step_mutate(season = as.factor(season)) %>% 
@@ -61,41 +61,61 @@ bike_recipe <- recipe(count ~., data = bike_share) %>%
   step_rm(datetime)
 
 prepped_recipe <- prep(bike_recipe)
-bake(prepped_recipe, new_data = bike_share)
+bake(prepped_recipe, new_data = training_data)
 
 #####
 ## Set up and fit a penalized regression model
 #####
-# five combinations of penalty and mixture
-
-# 1.41 kaggle score
-# bike_share_model <- linear_reg(penalty = 5, mixture = 0.2) %>% 
-#   set_engine("glmnet")
-
-# 1.41 kaggle score
-# bike_share_model <- linear_reg(penalty = 12, mixture = 0.8) %>% 
-#   set_engine("glmnet")
-
-#1.28 kaggle score
-# bike_share_model <- linear_reg(penalty = 1, mixture = 0.5) %>%
-#   set_engine("glmnet")
-
-#1.19 kaggle score
-# bike_share_model <- linear_reg(penalty = 2, mixture = 0.1) %>%
-#   set_engine("glmnet")
-
-#1.022 kaggle score
-bike_share_model <- linear_reg(penalty = 0.1, mixture = 0.1) %>%
+## Penalized regression model
+bike_share_model <- linear_reg(penalty = tune(),
+                               mixture = tune()) %>%
   set_engine("glmnet")
 
 ## Combine into a workflow and fit
 bike_workflow <- workflow() %>% 
   add_recipe(bike_recipe) %>% 
-  add_model(bike_share_model) %>% 
-  fit(data = bike_share)
+  add_model(bike_share_model)
 
+#####
+## Create cross-validation
+#####
+L <- 5
+K <- 10
+
+## Grid of values to tune over
+grid_of_tuning_params <- grid_regular(penalty(),
+                                      mixture(), 
+                                      levels = L)
+
+## Split data for CV
+folds <- vfold_cv(training_data, v = K, repeats = 1)
+
+## Run the CV
+CV_results <- bike_workflow %>% 
+  tune_grid(resamples = folds, 
+            grid = grid_of_tuning_params, 
+            metrics = metric_set(rmse, mae))
+
+## Plot results 
+collect_metrics(CV_results) %>% 
+  filter(.metric == "rmse") %>% 
+  ggplot(data = ., aes(x = penalty, y = mean, color = factor(mixture))) +
+  geom_line()
+
+## Find Best Tuning Parameters
+bestTune <- CV_results %>% 
+  select_best(metric="rmse")
+
+## Finalize the workflow and fit it
+final_wf <-  bike_workflow %>% 
+  finalize_workflow(bestTune) %>% 
+  fit(data = training_data)
+
+#####
+## Create predictions
+#####
 ## Generate predictions using penalized linear model
-bike_predictions <- predict(bike_workflow, new_data = test_data)
+bike_predictions <- predict(final_wf, new_data = test_data)
 
 ## Look at the predictions
 bike_predictions
