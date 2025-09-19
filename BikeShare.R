@@ -45,6 +45,14 @@ humid_plot <- ggplot(training_data, aes(x = humidity)) +
 
 ggsave("Bike_EDA.png")
 
+#####
+## Create decision tree
+#####
+tree_mod <- decision_tree(tree_depth = tune(), 
+                          cost_complexity = tune(), 
+                          min_n = tune()) %>% 
+  set_engine("rpart") %>% 
+  set_mode("regression")
 
 #####
 ## Feature Engineering Recipe
@@ -74,7 +82,7 @@ bike_share_model <- linear_reg(penalty = tune(),
 ## Combine into a workflow and fit
 bike_workflow <- workflow() %>% 
   add_recipe(bike_recipe) %>% 
-  add_model(bike_share_model)
+  add_model(tree_mod)
 
 #####
 ## Create cross-validation
@@ -83,8 +91,9 @@ L <- 5
 K <- 10
 
 ## Grid of values to tune over
-grid_of_tuning_params <- grid_regular(penalty(),
-                                      mixture(), 
+grid_of_tuning_params <- grid_regular(tree_depth(),
+                                      cost_complexity(),
+                                      min_n(),
                                       levels = L)
 
 ## Split data for CV
@@ -97,17 +106,17 @@ CV_results <- bike_workflow %>%
             metrics = metric_set(rmse, mae))
 
 ## Plot results 
-collect_metrics(CV_results) %>% 
-  filter(.metric == "rmse") %>% 
-  ggplot(data = ., aes(x = penalty, y = mean, color = factor(mixture))) +
-  geom_line()
+# collect_metrics(CV_results) %>% 
+#   filter(.metric == "rmse") %>% 
+#   ggplot(data = ., aes(x = penalty, y = mean, color = factor(mixture))) +
+#   geom_line()
 
 ## Find Best Tuning Parameters
 bestTune <- CV_results %>% 
   select_best(metric="rmse")
 
 ## Finalize the workflow and fit it
-final_wf <-  bike_workflow %>% 
+final_wf <-  bike_workflow %>%
   finalize_workflow(bestTune) %>% 
   fit(data = training_data)
 
@@ -131,4 +140,4 @@ kaggle_submission <- exp(bike_predictions) %>%
   mutate(datetime = as.character(format(datetime)))
 
 ## Write out the file
-vroom_write(x = kaggle_submission, file = "./LinearPreds.csv", delim = ",")
+vroom_write(x = kaggle_submission, file = "./TreePreds.csv", delim = ",")
