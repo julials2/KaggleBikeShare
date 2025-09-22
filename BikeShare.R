@@ -46,12 +46,12 @@ humid_plot <- ggplot(training_data, aes(x = humidity)) +
 ggsave("Bike_EDA.png")
 
 #####
-## Create decision tree
+## Create random forest
 #####
-tree_mod <- decision_tree(tree_depth = tune(), 
-                          cost_complexity = tune(), 
-                          min_n = tune()) %>% 
-  set_engine("rpart") %>% 
+tree_mod <- rand_forest(mtry = tune(), 
+                        min_n = tune(), 
+                        trees = 1000) %>% 
+  set_engine("ranger") %>% 
   set_mode("regression")
 
 #####
@@ -64,6 +64,7 @@ bike_recipe <- recipe(count ~., data = training_data) %>%
   step_mutate(holiday = as.factor(holiday)) %>% 
   step_mutate(workingday = as.factor(workingday)) %>% 
   step_time(datetime, features = "hour") %>% 
+  step_date(datetime, features = "dow") %>% 
   step_dummy(all_nominal_predictors()) %>% 
   step_normalize(all_numeric_predictors()) %>% 
   step_rm(datetime)
@@ -91,10 +92,9 @@ L <- 5
 K <- 10
 
 ## Grid of values to tune over
-grid_of_tuning_params <- grid_regular(tree_depth(),
-                                      cost_complexity(),
-                                      min_n(),
-                                      levels = L)
+grid_of_tuning_params <- grid_regular(mtry(range = c(1, 9)), 
+                                      min_n(), 
+                                      levels = 5)
 
 ## Split data for CV
 folds <- vfold_cv(training_data, v = K, repeats = 1)
