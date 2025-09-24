@@ -3,6 +3,8 @@ library(tidymodels)
 library(vroom)
 library(patchwork)
 library(glmnet)
+library(bonsai)
+library(lightgbm)
 
 #####
 ## Read in and clean train and test data
@@ -46,12 +48,16 @@ humid_plot <- ggplot(training_data, aes(x = humidity)) +
 ggsave("Bike_EDA.png")
 
 #####
-## Create random forest
+## Create boosted tree and bart
 #####
-tree_mod <- rand_forest(mtry = tune(), 
-                        min_n = tune(), 
-                        trees = 1000) %>% 
-  set_engine("ranger") %>% 
+# tree_mod <- rand_forest(mtry = tune(), 
+#                         min_n = tune(), 
+#                         trees = 1000) %>% 
+#   set_engine("ranger") %>% 
+#   set_mode("regression")
+
+bart_model <- bart(trees = tune()) %>% 
+  set_engine("dbarts") %>% 
   set_mode("regression")
 
 #####
@@ -81,9 +87,9 @@ bike_share_model <- linear_reg(penalty = tune(),
   set_engine("glmnet")
 
 ## Combine into a workflow and fit
-bike_workflow <- workflow() %>% 
+bart_workflow <- workflow() %>% 
   add_recipe(bike_recipe) %>% 
-  add_model(tree_mod)
+  add_model(bart_model)
 
 #####
 ## Create cross-validation
@@ -92,15 +98,24 @@ L <- 5
 K <- 10
 
 ## Grid of values to tune over
-grid_of_tuning_params <- grid_regular(mtry(range = c(1, 9)), 
-                                      min_n(), 
-                                      levels = 5)
+grid_of_tuning_params <- grid_regular(trees())
 
 ## Split data for CV
 folds <- vfold_cv(training_data, v = K, repeats = 1)
 
 ## Run the CV
-CV_results <- bike_workflow %>% 
+CV_results <- bart_workflow %>% 
+  tune_grid(resamples = folds, 
+            grid = grid_of_tuning_params, 
+            metrics = metric_set(rmse, mae))
+
+grid_of_tuning_params <- grid_regular(trees())
+
+## Split data for CV
+folds <- vfold_cv(training_data, v = K, repeats = 1)
+
+## Run the CV
+CV_results <- bart_workflow %>% 
   tune_grid(resamples = folds, 
             grid = grid_of_tuning_params, 
             metrics = metric_set(rmse, mae))
@@ -116,7 +131,7 @@ bestTune <- CV_results %>%
   select_best(metric="rmse")
 
 ## Finalize the workflow and fit it
-final_wf <-  bike_workflow %>%
+final_wf <- bart_workflow %>%
   finalize_workflow(bestTune) %>% 
   fit(data = training_data)
 
@@ -140,4 +155,4 @@ kaggle_submission <- exp(bike_predictions) %>%
   mutate(datetime = as.character(format(datetime)))
 
 ## Write out the file
-vroom_write(x = kaggle_submission, file = "./TreePreds.csv", delim = ",")
+vroom_write(x = kaggle_submission, file = "./BARTPreds.csv", delim = ",")
