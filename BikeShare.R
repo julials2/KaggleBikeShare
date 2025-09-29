@@ -57,9 +57,9 @@ ggsave("Bike_EDA.png")
 #   set_engine("ranger") %>% 
 #   set_mode("regression")
 
-# bart_model <- bart(trees = tune()) %>% 
-#   set_engine("dbarts") %>% 
-#   set_mode("regression")
+bart_model <- bart(trees = tune()) %>%
+  set_engine("dbarts") %>%
+  set_mode("regression")
 
 #####
 ## Feature Engineering Recipe
@@ -67,10 +67,10 @@ ggsave("Bike_EDA.png")
 bike_recipe <- recipe(count ~., data = training_data) %>% 
   step_mutate(weather = ifelse(weather == 4, 3, weather)) %>% 
   step_mutate(weather = as.factor(weather)) %>% 
-  step_mutate(season = as.factor(season)) %>% 
   step_mutate(holiday = as.factor(holiday)) %>% 
   step_mutate(workingday = as.factor(workingday)) %>% 
   step_time(datetime, features = "hour") %>% 
+  step_mutate(season = as.factor(season)) %>% 
   step_date(datetime, features = "dow") %>% 
   step_dummy(all_nominal_predictors()) %>% 
   step_normalize(all_numeric_predictors()) %>% 
@@ -87,65 +87,67 @@ bake(prepped_recipe, new_data = training_data)
 #                                mixture = tune()) %>%
 #   set_engine("glmnet")
 
-h2o::h2o.init()
-
-auto_model <- auto_ml() %>% 
-  set_engine("h2o", max_runtime_secs = 300, max_models = 5) %>%
-  set_mode("regression")
+# h2o::h2o.init()
+# 
+# auto_model <- auto_ml() %>% 
+#   set_engine("h2o", max_runtime_secs = 300, max_models = 5) %>%
+#   set_mode("regression")
 
 ## Combine into a workflow and fit
-# bart_workflow <- workflow() %>% 
-#   add_recipe(bike_recipe) %>% 
-#   add_model(bart_model)
+bart_workflow <- workflow() %>%
+  add_recipe(bike_recipe) %>%
+  add_model(bart_model)
 
-automl_wf <- workflow() %>% 
-  add_recipe(bike_recipe) %>% 
-  add_model(auto_model) %>% 
-  fit(data = training_data)
+# automl_wf <- workflow() %>% 
+#   add_recipe(bike_recipe) %>% 
+#   add_model(auto_model) %>% 
+#   fit(data = training_data)
 
 #####
 ## Create cross-validation
 #####
-# L <- 5
-# K <- 10
-# 
+L <- 5
+K <- 10
+#
 # ## Grid of values to tune over
-# grid_of_tuning_params <- grid_regular(trees())
-# 
+grid_of_tuning_params <- grid_regular(trees())
+#
 # ## Split data for CV
-# folds <- vfold_cv(training_data, v = K, repeats = 1)
-# 
-# ## Run the CV
-# CV_results <- bart_workflow %>% 
-#   tune_grid(resamples = folds, 
-#             grid = grid_of_tuning_params, 
-#             metrics = metric_set(rmse, mae))
-# 
-# grid_of_tuning_params <- grid_regular(trees())
-# 
-# ## Split data for CV
-# folds <- vfold_cv(training_data, v = K, repeats = 1)
-# 
-# ## Run the CV
-# CV_results <- bart_workflow %>% 
-#   tune_grid(resamples = folds, 
-#             grid = grid_of_tuning_params, 
-#             metrics = metric_set(rmse, mae))
+folds <- vfold_cv(training_data, v = K, repeats = 1)
 
-## Plot results 
-# collect_metrics(CV_results) %>% 
-#   filter(.metric == "rmse") %>% 
+# ## Run the CV
+CV_results <- bart_workflow %>%
+  tune_grid(resamples = folds,
+            grid = grid_of_tuning_params,
+            metrics = metric_set(rmse, mae))
+
+grid_of_tuning_params <- grid_regular(trees())
+
+# ## Split data for CV
+folds <- vfold_cv(training_data, v = K, repeats = 1)
+
+## Run the CV
+CV_results <- bart_workflow %>%
+  tune_grid(resamples = folds,
+            grid = grid_of_tuning_params,
+            metrics = metric_set(rmse, mae))
+
+## Plot results
+# collect_metrics(CV_results) %>%
+#   filter(.metric == "rmse") %>%
 #   ggplot(data = ., aes(x = penalty, y = mean, color = factor(mixture))) +
 #   geom_line()
 
 ## Find Best Tuning Parameters
-bestTune <- CV_results %>% 
+bestTune <- CV_results %>%
   select_best(metric="rmse")
 
 ## Finalize the workflow and fit it
 final_wf <- bart_workflow %>%
-  finalize_workflow(bestTune) %>% 
+  finalize_workflow(bestTune) %>%
   fit(data = training_data)
+
+
 
 #####
 ## Create predictions
@@ -157,10 +159,16 @@ bike_predictions <- predict(automl_wf, new_data = test_data)
 bike_predictions
 
 #####
+## Read in DataRobot predictions
+#####
+bike_predictions <- read_csv("datarobot.csv") %>% 
+  rename(.pred = count_PREDICTION)
+
+#####
 ## Format the predictions for submission to kaggle
 #####
 
-kaggle_submission <- exp(bike_predictions) |>
+kaggle_submission <- exp(bike_predictions) %>% 
   bind_cols(., test_data) %>% 
   select(datetime, .pred) %>% 
   rename(count = .pred) %>% 
@@ -168,4 +176,4 @@ kaggle_submission <- exp(bike_predictions) |>
   mutate(datetime = as.character(format(datetime)))
 
 ## Write out the file
-vroom_write(x = kaggle_submission, file = "./BARTPreds.csv", delim = ",")
+vroom_write(x = kaggle_submission, file = "./DataRobotPreds.csv", delim = ",")
